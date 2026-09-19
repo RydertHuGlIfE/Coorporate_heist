@@ -1,0 +1,98 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 10pt; line-height: 1.4; color: #222; margin: 15mm; }
+h1 { font-size: 16pt; border-bottom: 2px solid #333; padding-bottom: 4px; margin-top: 0; color: #111; }
+h2 { font-size: 12pt; border-bottom: 1px solid #ccc; padding-bottom: 2px; margin-top: 12px; margin-bottom: 6px; color: #222; }
+p { margin-top: 0; margin-bottom: 6px; text-align: justify; }
+ul { margin-top: 0; margin-bottom: 6px; padding-left: 20px; }
+li { margin-bottom: 3px; }
+code { background-color: #eee; padding: 2px 4px; border-radius: 3px; font-family: monospace; font-size: 8.5pt; }
+pre { background-color: #f4f4f4; padding: 6px; border-radius: 4px; font-family: monospace; font-size: 8.5pt; }
+hr { border: 0; height: 1px; background: #ddd; margin: 10px 0; }
+</style></head><body>
+<h1>The Corporate Heist - Solution Documentation</h1>
+<p>Team name: Kestrel Alpha</p>
+<p>Unstop team ID: CH-2026-919</p>
+<p>Members: Pradeepto &amp; Team</p>
+
+<hr>
+
+<h2>1. Summary</h2>
+<p>Our solution identifies the top 500 candidates most likely to be Nightingale&#x27;s top 5% performers by combining a high-capacity machine learning ranking engine with a strict rules-based insider heuristics filter. We train an ensemble of LightGBM Regressors (predicting raw 1-year post-hire performance) and LightGBM Classifiers (targeting the top 5% threshold directly) on 20,000 historical hires. Crucially, we adjust for the current hiring cycle by incorporating public code contributions, rewarding non-traditional institutes when paired with top technical assessment scores and role fit, and shrinking residuals to honor the &quot;old-boys&#x27; network&quot; colleges. Finally, we execute rigorous data integrity pipelines: removing fabricated profiles (timeline contradictions and accelerated title claims), excluding candidates with &gt;60 days notice, and deduplicating multiple recruiter submissions using Union-Find to ensure each individual appears at most once on the shortlist.</p>
+
+<hr>
+
+<h2>2. Data Cleaning and Parsing</h2>
+<p>Recruiter-entered fields contained massive formatting inconsistencies and noisy inputs:</p>
+<li><strong>Total Experience (<code>total_experience</code>)</strong>: Extracted numeric years across diverse formats: <code>&quot;17.6 years&quot;</code>, <code>&quot;8+ yrs&quot;</code>, <code>&quot;Apprentice [23 mo]&quot;</code>, <code>&quot;&lt;1 year&quot;</code>. Normalized months to fractional years (<code>/12</code>).</li>
+<li><strong>Assessment &amp; Aptitude Scores (<code>technical_assessment</code>, <code>aptitude_score</code>)</strong>: Normalized variable representations including percentages (<code>&quot;75%&quot;</code> -&gt; 75), explicit denominators (<code>&quot;71/100&quot;</code>, <code>&quot;5.7/10&quot;</code> -&gt; 57), and handled missing codes (<code>&quot;not taken&quot;</code>, <code>&quot;absent&quot;</code>, <code>&quot;na&quot;</code> -&gt; NaN).</li>
+<li><strong>Ratings &amp; KPIs (<code>last_rating</code>, <code>kpi_met</code>)</strong>: Mapped rating strings (<code>&quot;outstanding&quot;</code>, <code>&quot;exceeds expectations&quot;</code>, <code>&quot;5/5&quot;</code>) to a continuous 1–5 scale, and KPI flags (<code>&quot;Y&quot;</code>, <code>&quot;yes&quot;</code>, <code>&quot;1&quot;</code>) to binary values.</li>
+<li><strong>CTC Normalization (<code>current_ctc</code>, <code>expected_ctc</code>)</strong>: Standardized disparate recruiter currency inputs into uniform Lakhs INR per annum (e.g. converting USD at 83/1e5, <code>&quot;7.53 Cr&quot;</code> -&gt; 753 Lakhs, <code>&quot;₹30,46,000&quot;</code> -&gt; 30.46 Lakhs). Computed the expected CTC hike ratio.</li>
+<li><strong>Notice Period (<code>notice_period</code>)</strong>: Parsed strings (<code>&quot;15 days&quot;</code>, <code>&quot;1 month&quot;</code>, <code>&quot;Immediate joiner&quot;</code>, <code>&quot;Serving notice - 30 days&quot;</code>) into numeric calendar days.</li>
+<li><strong>Career Path (<code>career_path</code>)</strong>: Deconstructed trajectory steps (<code>&quot;Title [duration]&quot;</code>) using regular expressions to extract total years, current seniority level (mapped via seniority keyword hierarchy from Intern:0 to CTO:9), time in last role, and total career promotions.</li>
+<li><strong>Institute Canonicalization (<code>institute</code>)</strong>: Normalized case, removed punctuation, consolidated regional abbreviations (e.g. <code>&quot;iitb&quot;</code> -&gt; <code>&quot;iit bombay&quot;</code>, <code>&quot;iitm&quot;</code> -&gt; <code>&quot;iit madras&quot;</code>, <code>&quot;trichy&quot;</code> -&gt; <code>&quot;tiruchirappalli&quot;</code>, unified BITS, DTU, NSUT, and IISc).</li>
+
+<hr>
+
+<h2>3. What Drives a Great Hire — Your Findings</h2>
+<p>Analysis of the 20,000 historical records (<code>train.csv</code>) and verification on the Ledger (<code>dev.csv</code>) revealed key patterns:</p>
+<p>1. <strong>Technical Assessment &amp; Role Fit Interaction</strong>: Technical assessment is the strongest single predictor, but its predictive power is amplified when combined with role-specific skill alignment. Candidates whose skills directly match their applied role&#x27;s skill distribution score significantly higher.</p>
+<p>2. <strong>Career Stability &amp; Promotion Velocity</strong>: Steady promotions without erratic gaps correlate strongly with high post-hire scores. Candidates with consistent tenure per employer outperform frequent job-hoppers.</p>
+<p>3. <strong>Recruiter Note Nuances</strong>: Text extraction revealed distinct behavioral signals. Candidates associated with on-call ownership, cross-team initiatives, and system design commendations had a ~7.0% top-performer rate (versus the 5.0% base rate), whereas notes citing debugging struggles or missed sprint commitments dropped below 3.8%.</p>
+<p>4. <strong>Historical College Residuals</strong>: Shrunk empirical Bayes residuals showed a small persistent advantage for a core group of premier institutes (IISc, IIT Kharagpur, BITS Pilani, IIT Kanpur, IIT Bombay, NSUT), corroborating the &quot;old-boys&#x27; network&quot; insider clue.</p>
+
+<hr>
+
+<h2>4. The Current Cycle</h2>
+<p>The current cycle (the Vault, <code>test.csv</code>) presents a distribution shift driven by updated leadership hiring mandates:</p>
+<p>1. <strong>Public Code Contributions (<code>public_code_contributions</code>)</strong>: This feature was not present in historical data. In the test set, ~5,552 candidates have tracked contributions (median 6, top 5% &gt;= 42). Candidates with dozens of merged contributions (&gt;= 24) receive a fast-track bonus, rewarding sustained open-source output.</p>
+<p>2. <strong>De-emphasis of General College Prestige</strong>: While general tier-1 status is no longer universally rewarded, candidates from institutes *never previously hired from* who achieved top-decile technical assessment scores and high role fit receive an explicit boost.</p>
+<p>3. <strong>Preservation of the Old-Boys&#x27; Network</strong>: Shrunk historical residuals for Nightingale leadership&#x27;s core colleges are retained as a calibrated additive signal.</p>
+
+<hr>
+
+<h2>5. Profiles You Excluded and Why</h2>
+<p>We enforce strict elimination rules prior to final ranking:</p>
+<p>1. <strong>Notice Period &gt; 60 Days (Clue 3)</strong>: Anyone unable to join within 2 months is excluded (<code>notice_period &gt; 60 days</code>). This disqualified 92 candidates in the test set.</p>
+<p>2. <strong>Fabricated Career Progression (Clue 2)</strong>: Candidates whose current title level (e.g. Lead, Architect, Director, VP) was attained faster than the 1st percentile of minimum historical experience for that title tier. This eliminated 137 implausibly inflated profiles.</p>
+<p>3. <strong>Timeline Contradictions (Clue 6)</strong>: Profiles with impossible timelines (e.g. claimed total experience exceeding years since graduation by &gt;3.5 years, or experience accumulated before age 16) were purged as fabricated resumes (98 instances).</p>
+<p>4. <strong>Deduplication of Candidate Profiles (Clue 6)</strong>: The same applicant frequently appeared under multiple candidate IDs entered by different recruiters. We constructed a Union-Find disjoint-set graph over exact 10-digit phone numbers, normalized emails, and name + graduation year keys. Out of 246 duplicate groups in <code>test.csv</code>, only the single highest-scoring profile was retained.</p>
+
+<hr>
+
+<h2>6. Model and Selection Procedure</h2>
+<li><strong>Feature Set</strong>: 135 features spanning clean numerical attributes, composite assessment scores, seniority metrics, career progression velocity, CTC hike dynamics, role-fit affinities, skill presence flags, and recruiter note sentiment n-grams.</li>
+<li><strong>Model Architecture</strong>:</li>
+<p>  - <strong>Ensemble Regressor</strong>: 4 LightGBM Regressors trained across different seeds predicting continuous <code>post_hire_score</code>.</p>
+<p>  - <strong>Ensemble Classifier</strong>: 4 LightGBM Classifiers trained across different seeds with positive class weighting (<code>scale_pos_weight=2.2</code>) predicting the binary top 5% outcome.</p>
+<li><strong>Score Formulation</strong>:</li>
+<p>  $$\text{Base Score} = 0.55 \times \text{Rank}(\hat{y}_{\text{reg}}) + 0.45 \times \text{Rank}(\hat{p}_{\text{clf}})$$</p>
+<p>  Standardized $\text{Score} = Z(\text{Base Score}) + \text{Bonus}_{\text{contrib}} + \text{Bonus}_{\text{new\_college\_strong}} + \text{Bonus}_{\text{old\_boys}}$.</p>
+<li><strong>Shortlist Selection</strong>: All candidates with exclusion flags receive $-\infty$. The remaining candidates are deduplicated greedily by descending score, selecting exactly the top 500 unique individuals.</li>
+
+<hr>
+
+<h2>7. What Did Not Work</h2>
+<li><strong>Naive Full-Feature Ensembles with Metro/Prestige Proxies</strong>: Training blindly on candidate city, degree prestige, and recruiter referral channel learned historical selection bias that degraded performance on newer cycles where those rules were discarded.</li>
+<li><strong>Pure Regression Ranking</strong>: Using only regression on <code>post_hire_score</code> yielded lower top-5% precision (overlap of 30.8%) compared to our dual regression + classification blend (overlap of 35.5%, dev precision 52.7%).</li>
+<li><strong>Over-weighting Code Contributions</strong>: Linearly scaling code contributions caused excessive displacement of top-tier technical performers by low-scoring applicants with high commits. Calibrating the bonus as an additive boost only above sustained thresholds (&gt;= 24) preserved assessment quality.</li>
+
+<hr>
+
+<h2>8. External Resources and AI Tools</h2>
+<li><strong>Libraries</strong>: <code>numpy</code>, <code>pandas</code>, <code>scikit-learn</code>, <code>lightgbm</code>, <code>scipy</code> (all compliant with competition Appendix A).</li>
+<li><strong>AI Tools</strong>: Claude / Antigravity pair programming assistant used for exploratory data analysis, rapid prototyping of feature extractors, and formatting verification.</li>
+
+<hr>
+
+<h2>9. How to Run</h2>
+<pre>
+# Environment: Python 3.11 / Linux (CPU only, ~60-90s execution time)
+python3 main.py
+
+# Verify format
+python3 check_format.py submission.csv test.csv
+</pre>
+<li><strong>Random Seed</strong>: Fixed at <code>20260919</code>.</li>
+<li><strong>Outputs</strong>: Generates compliant <code>submission.csv</code> with exactly 500 uniquely ranked candidates.</li>
+
+</body></html>
